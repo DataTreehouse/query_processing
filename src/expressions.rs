@@ -308,10 +308,6 @@ pub fn exists(
     ser.rename(context.as_str());
     df.with_column(ser).unwrap();
     df = df.drop(exists_context.as_str()).unwrap();
-    rdf_node_types.insert(
-        context.as_str().to_string(),
-        RDFNodeType::Literal(xsd::BOOLEAN.into_owned()),
-    );
     Ok(SolutionMappings::new(df.lazy(), rdf_node_types))
 }
 
@@ -528,6 +524,10 @@ pub fn func_expression(
                             .cast(DataType::UInt64)
                             .alias(context.as_str()),
                     );
+                solution_mappings.rdf_node_types.insert(
+                    context.as_str().to_string(),
+                    RDFNodeType::Literal(xsd::INTEGER.into_owned()),
+                );
             } else if iri == DATETIME_AS_SECONDS {
                 assert_eq!(args.len(), 1);
                 let first_context = args_contexts.get(&0).unwrap();
@@ -539,6 +539,10 @@ pub fn func_expression(
                             .div(lit(1000))
                             .alias(context.as_str()),
                     );
+                solution_mappings.rdf_node_types.insert(
+                    context.as_str().to_string(),
+                    RDFNodeType::Literal(xsd::INTEGER.into_owned()),
+                );
             } else if iri == NANOS_AS_DATETIME {
                 assert_eq!(args.len(), 1);
                 let first_context = args_contexts.get(&0).unwrap();
@@ -548,6 +552,10 @@ pub fn func_expression(
                             .cast(DataType::Datetime(TimeUnit::Nanoseconds, None))
                             .alias(context.as_str()),
                     );
+                solution_mappings.rdf_node_types.insert(
+                    context.as_str().to_string(),
+                    RDFNodeType::Literal(xsd::DATE_TIME.into_owned()),
+                );
             } else if iri == SECONDS_AS_DATETIME {
                 assert_eq!(args.len(), 1);
                 let first_context = args_contexts.get(&0).unwrap();
@@ -558,6 +566,10 @@ pub fn func_expression(
                             .cast(DataType::Datetime(TimeUnit::Milliseconds, None))
                             .alias(context.as_str()),
                     );
+                solution_mappings.rdf_node_types.insert(
+                    context.as_str().to_string(),
+                    RDFNodeType::Literal(xsd::DATE_TIME.into_owned()),
+                );
             } else if iri == MODULUS {
                 assert_eq!(args.len(), 2);
                 let first_context = args_contexts.get(&0).unwrap();
@@ -568,6 +580,10 @@ pub fn func_expression(
                         (col(&first_context.as_str()) % col(&second_context.as_str()))
                             .alias(context.as_str()),
                     );
+                solution_mappings.rdf_node_types.insert(
+                    context.as_str().to_string(),
+                    RDFNodeType::Literal(xsd::INTEGER.into_owned()),
+                );
             } else if iri == FLOOR_DATETIME_TO_SECONDS_INTERVAL {
                 assert_eq!(args.len(), 2);
                 let first_context = args_contexts.get(&0).unwrap();
@@ -586,6 +602,10 @@ pub fn func_expression(
                             .cast(DataType::Datetime(TimeUnit::Milliseconds, None)))
                             .alias(context.as_str()),
                     );
+                solution_mappings.rdf_node_types.insert(
+                    context.as_str().to_string(),
+                    RDFNodeType::Literal(xsd::DATE_TIME.into_owned()),
+                );
             } else {
                 todo!("{:?}", nn)
             }
