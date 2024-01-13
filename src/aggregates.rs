@@ -111,7 +111,7 @@ pub fn max(solution_mappings: &SolutionMappings, column_context: &Context) -> (E
         expr_rdf_node_type.clone()
     };
 
-    let out_expr = col(column_context.as_str()).min();
+    let out_expr = col(column_context.as_str()).max();
 
     (out_expr, out_rdf_node_type)
 }

@@ -8,7 +8,7 @@ use polars::prelude::{col, concat_lf_diagonal, lit, Expr, JoinArgs, JoinType, Un
 use representation::multitype::{
     create_compatible_solution_mappings, create_join_compatible_solution_mappings, join_workaround,
 };
-use representation::query_context::{Context, PathEntry};
+use representation::query_context::{Context};
 use representation::solution_mapping::{is_string_col, SolutionMappings};
 use representation::RDFNodeType;
 use std::collections::HashMap;
@@ -72,7 +72,7 @@ pub fn prepare_group_by(
 }
 
 pub fn group_by(
-    mut solution_mappings: SolutionMappings,
+    solution_mappings: SolutionMappings,
     aggregate_expressions: Vec<Expr>,
     by: Vec<Expr>,
     dummy_varname: Option<String>,
