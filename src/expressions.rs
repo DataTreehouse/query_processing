@@ -289,7 +289,7 @@ pub fn exists(
 ) -> Result<SolutionMappings, QueryProcessingError> {
     let SolutionMappings {
         mappings,
-        mut rdf_node_types,
+        rdf_node_types,
     } = solution_mappings;
     let mut df = mappings.collect().unwrap();
     let exists_df = exists_lf
@@ -610,9 +610,52 @@ pub fn func_expression(
                 todo!("{:?}", nn)
             }
         }
-        _ => {
-            todo!()
+        Function::Contains => {
+            assert_eq!(args.len(), 2);
+            let first_context = args_contexts.get(&0).unwrap();
+            let second_context = args_contexts.get(&1).unwrap();
+
+            solution_mappings.mappings =
+                solution_mappings.mappings.with_column(
+                    (col(&first_context.as_str()).str().contains_literal(col(&second_context.as_str())))
+                        .alias(context.as_str()),
+                );
+            solution_mappings.rdf_node_types.insert(
+                context.as_str().to_string(),
+                RDFNodeType::Literal(xsd::BOOLEAN.into_owned()),
+            );
         }
+        Function::StrStarts => {
+            assert_eq!(args.len(), 2);
+            let first_context = args_contexts.get(&0).unwrap();
+            let second_context = args_contexts.get(&1).unwrap();
+
+            solution_mappings.mappings =
+                solution_mappings.mappings.with_column(
+                    (col(&first_context.as_str()).str().starts_with(col(&second_context.as_str())))
+                        .alias(context.as_str()),
+                );
+            solution_mappings.rdf_node_types.insert(
+                context.as_str().to_string(),
+                RDFNodeType::Literal(xsd::BOOLEAN.into_owned()),
+            );
+        }
+        Function::StrEnds => {
+            assert_eq!(args.len(), 2);
+            let first_context = args_contexts.get(&0).unwrap();
+            let second_context = args_contexts.get(&1).unwrap();
+
+            solution_mappings.mappings =
+                solution_mappings.mappings.with_column(
+                    (col(&first_context.as_str()).str().ends_with(col(&second_context.as_str())))
+                        .alias(context.as_str()),
+                );
+            solution_mappings.rdf_node_types.insert(
+                context.as_str().to_string(),
+                RDFNodeType::Literal(xsd::BOOLEAN.into_owned()),
+            );
+        }
+        _ => {todo!("{}", func)}
     }
     solution_mappings.mappings = solution_mappings.mappings.drop_columns(
         args_contexts
