@@ -210,7 +210,7 @@ pub fn bound(
 ) -> Result<SolutionMappings, QueryProcessingError> {
     solution_mappings.mappings = solution_mappings
         .mappings
-        .with_column(col(v.as_str()).is_null().alias(context.as_str()));
+        .with_column(col(v.as_str()).is_null().not().alias(context.as_str()));
     solution_mappings.rdf_node_types.insert(
         context.as_str().to_string(),
         RDFNodeType::Literal(xsd::BOOLEAN.into_owned()),
