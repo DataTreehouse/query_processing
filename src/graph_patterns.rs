@@ -3,9 +3,10 @@ use log::warn;
 use oxrdf::Variable;
 use polars::datatypes::{CategoricalOrdering, DataType};
 use polars::frame::UniqueKeepStrategy;
-use polars::prelude::{col, concat_lf_diagonal, lit, Expr, JoinArgs, JoinType, UnionArgs, LazyFrame};
-use representation::multitype::{convert_lf_col_to_multitype, create_join_compatible_solution_mappings, force_convert_multicol_to_single_col};
+use polars::prelude::{col, concat_lf_diagonal, lit, Expr, JoinArgs, JoinType, UnionArgs, LazyFrame, TemporalMethods};
+use representation::multitype::{convert_lf_col_to_multitype, create_join_compatible_solution_mappings, explode_multicols, force_convert_multicol_to_single_col, implode_multicolumns};
 use representation::query_context::{Context};
+use representation::multitype::join_workaround;
 use representation::solution_mapping::{is_string_col, SolutionMappings};
 use representation::{BaseRDFNodeType, RDFNodeType};
 use std::collections::{HashMap, HashSet};
@@ -250,6 +251,8 @@ pub fn left_join(
     Ok(left_solution_mappings)
 }
 
+
+
 //TODO: Fix datatypes??!?!?
 pub fn minus(
     mut left_solution_mappings: SolutionMappings,
@@ -380,7 +383,7 @@ pub fn union(
                         let right_set:HashSet<_> = right_types.iter().collect();
                         let mut union:Vec<_> = left_set.union(&right_set).into_iter().map(|x|(*x).clone()).collect();
                         union.sort();
-                        updated_types.insert(left_col.clone(), RDFNodeType::MultiType(union))
+                        updated_types.insert(left_col.clone(), RDFNodeType::MultiType(union));
                     } else { //Right not multi
                         let base_right = BaseRDFNodeType::from_rdf_node_type(right_type);
                         left_set.insert(&base_right);
@@ -414,17 +417,24 @@ pub fn union(
             }
         }
     }
-    let mut explode_set = HashSet::new();
-    for k in updated_types.keys() {
-        explode_set.insert(k);
-    }
-
     let prefix = uuid::Uuid::new_v4().to_string();
-    (left_mappings, left_exploded_set) = explode_multicols(left_mappings, &explode_set, &prefix);
-    (right_mappings, _) = explode_multicols(right_mappings, &explode_set, prefix);
+    let (left_mappings, left_exploded_map) = explode_multicols(left_mappings, &updated_types, &prefix);
+    let (right_mappings, _) = explode_multicols(right_mappings, &updated_types, &prefix);
 
-    let output_mappings =
+    let mut output_mappings =
         concat_lf_diagonal(vec![left_mappings, right_mappings], UnionArgs::default())
             .expect("Concat problem");
-    Ok(SolutionMappings::new(output_mappings, left_datatypes))
+    output_mappings = implode_multicolumns(output_mappings, left_exploded_map);
+    let mut out_map = HashMap::new();
+    for (k,v) in left_datatypes.into_iter().chain(right_datatypes.into_iter()) {
+        if !out_map.contains_key(&k) {
+            if let Some(v) = updated_types.remove(&k) {
+                out_map.insert(k, v);
+            } else {
+                out_map.insert(k, v);
+            }
+        }
+    }
+
+    Ok(SolutionMappings::new(output_mappings, out_map))
 }
