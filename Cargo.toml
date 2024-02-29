@@ -4,12 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-#representation = { path = "../representation"}
-representation = { git = "https://github.com/DataTreehouse/representation"}
+representation = { path = "../representation"}
+#representation = { git = "https://github.com/DataTreehouse/representation"}
 rayon = "1.6.0"
 spargebra = { git = "https://github.com/DataTreehouse/spargebra"}
 oxrdf = {version="0.1.7"}
-polars = {version="0.35.4", features=["zip_with","performant", "semi_anti_join","abs", "round_series", "lazy", "concat_str", "is_in", "dtype-full", "strings", "horizontal_concat", "rows", "timezones", "polars-time", "temporal", "list_eval", "partition_by", "parquet", "diagonal_concat", "cross_join", "cum_agg", "coalesce"] }
+polars = {version="0.37.0", features=["zip_with","performant", "semi_anti_join","abs", "round_series", "lazy", "concat_str", "is_in", "dtype-full", "strings", "rows", "timezones", "polars-time", "temporal", "list_eval", "partition_by", "parquet", "diagonal_concat", "cross_join", "cum_agg", "coalesce"] }
 log="0.4.19"
 chrono = "0.4"
 chrono-tz = "0.8"

@@ -130,7 +130,7 @@ pub fn group_concat(
     };
     let out_expr = if distinct {
         col(column_context.as_str())
-            .cast(DataType::Utf8)
+            .cast(DataType::String)
             .list()
             .0
             .apply(
@@ -139,7 +139,7 @@ pub fn group_concat(
                         str_concat(
                             s.unique_stable()
                                 .expect("Unique stable error")
-                                .utf8()
+                                .str()
                                 .unwrap(),
                             use_sep.as_str(),
                             true,
@@ -147,21 +147,21 @@ pub fn group_concat(
                         .into_series(),
                     ))
                 },
-                GetOutput::from_type(DataType::Utf8),
+                GetOutput::from_type(DataType::String),
             )
             .first()
     } else {
         col(column_context.as_str())
-            .cast(DataType::Utf8)
+            .cast(DataType::String)
             .list()
             .0
             .apply(
                 move |s| {
                     Ok(Some(
-                        str_concat(s.utf8().unwrap(), use_sep.as_str(), true).into_series(),
+                        str_concat(s.str().unwrap(), use_sep.as_str(), true).into_series(),
                     ))
                 },
-                GetOutput::from_type(DataType::Utf8),
+                GetOutput::from_type(DataType::String),
             )
             .first()
     };

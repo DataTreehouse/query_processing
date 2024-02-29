@@ -1,17 +1,14 @@
 use crate::errors::QueryProcessingError;
 use log::warn;
 use oxrdf::Variable;
-use polars::datatypes::DataType;
-use polars::export::ahash::HashSet;
+use polars::datatypes::{CategoricalOrdering, DataType};
 use polars::frame::UniqueKeepStrategy;
-use polars::prelude::{col, concat_lf_diagonal, lit, Expr, JoinArgs, JoinType, UnionArgs};
-use representation::multitype::{
-    create_compatible_solution_mappings, create_join_compatible_solution_mappings, join_workaround,
-};
+use polars::prelude::{col, concat_lf_diagonal, lit, Expr, JoinArgs, JoinType, UnionArgs, LazyFrame};
+use representation::multitype::{convert_lf_col_to_multitype, create_join_compatible_solution_mappings, force_convert_multicol_to_single_col};
 use representation::query_context::{Context};
 use representation::solution_mapping::{is_string_col, SolutionMappings};
-use representation::RDFNodeType;
-use std::collections::HashMap;
+use representation::{BaseRDFNodeType, RDFNodeType};
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 pub fn distinct(
@@ -48,7 +45,7 @@ pub fn filter(
     solution_mappings.mappings = solution_mappings
         .mappings
         .filter(col(expression_context.as_str()))
-        .drop_columns([&expression_context.as_str()]);
+        .drop([&expression_context.as_str()]);
     Ok(solution_mappings)
 }
 
@@ -89,7 +86,7 @@ pub fn group_by(
         datatypes.insert(k, v);
     }
     if let Some(dummy_varname) = dummy_varname {
-        mappings = mappings.drop_columns([dummy_varname]);
+        mappings = mappings.drop([dummy_varname]);
     }
     Ok(SolutionMappings::new(mappings, datatypes))
 }
@@ -142,9 +139,9 @@ pub fn join(
             let dt = right_datatypes.get(&c).unwrap();
             if is_string_col(dt) {
                 right_mappings =
-                    right_mappings.with_column(col(&c).cast(DataType::Categorical(None)));
+                    right_mappings.with_column(col(&c).cast(DataType::Categorical(None, CategoricalOrdering::Physical)));
                 left_mappings =
-                    left_mappings.with_column(col(&c).cast(DataType::Categorical(None)));
+                    left_mappings.with_column(col(&c).cast(DataType::Categorical(None, CategoricalOrdering::Physical)));
             }
         }
 
@@ -219,9 +216,9 @@ pub fn left_join(
             let dt = right_datatypes.get(&c).unwrap();
             if is_string_col(dt) {
                 right_mappings =
-                    right_mappings.with_column(col(&c).cast(DataType::Categorical(None)).alias(&c));
+                    right_mappings.with_column(col(&c).cast(DataType::Categorical(None, CategoricalOrdering::Physical)).alias(&c));
                 left_mappings =
-                    left_mappings.with_column(col(&c).cast(DataType::Categorical(None)).alias(&c));
+                    left_mappings.with_column(col(&c).cast(DataType::Categorical(None, CategoricalOrdering::Physical)).alias(&c));
             }
         }
         left_mappings = join_workaround(
@@ -234,6 +231,7 @@ pub fn left_join(
                 validation: Default::default(),
                 suffix: None,
                 slice: None,
+                join_nulls: true,
             },
         );
     }
@@ -278,10 +276,10 @@ pub fn minus(
         for c in join_on {
             if is_string_col(left_solution_mappings.rdf_node_types.get(c).unwrap()) {
                 right_mappings =
-                    right_mappings.with_column(col(c).cast(DataType::Categorical(None)));
+                    right_mappings.with_column(col(c).cast(DataType::Categorical(None, CategoricalOrdering::Physical)));
                 left_solution_mappings.mappings = left_solution_mappings
                     .mappings
-                    .with_column(col(c).cast(DataType::Categorical(None)));
+                    .with_column(col(c).cast(DataType::Categorical(None, CategoricalOrdering::Physical)));
             }
         }
         let all_false = [false].repeat(join_on_cols.len());
@@ -326,7 +324,7 @@ pub fn order_by(
         true,
         false,
     );
-    mappings = mappings.drop_columns(
+    mappings = mappings.drop(
         inner_contexts
             .iter()
             .map(|x| x.as_str())
@@ -365,23 +363,65 @@ pub fn union(
     right_solution_mappings: SolutionMappings,
 ) -> Result<SolutionMappings, QueryProcessingError> {
     let SolutionMappings {
-        mappings: left_mappings,
+        mappings: mut left_mappings,
         rdf_node_types: left_datatypes,
     } = left_solution_mappings;
     let SolutionMappings {
-        mappings: right_mappings,
+        mappings: mut right_mappings,
         rdf_node_types: right_datatypes,
     } = right_solution_mappings;
-    let (left_mappings, mut left_datatypes, right_mappings, mut right_datatypes) =
-        create_compatible_solution_mappings(
-            left_mappings,
-            left_datatypes,
-            right_mappings,
-            right_datatypes,
-        );
-    for (k, v) in right_datatypes.drain() {
-        left_datatypes.entry(k).or_insert(v);
+    let mut updated_types = HashMap::new();
+    for (left_col, left_type) in &left_datatypes {
+        if let Some(right_type) = right_datatypes.get(left_col) {
+            if left_type != right_type {
+                if let RDFNodeType::MultiType(left_types) = left_type {
+                    let mut left_set:HashSet<_> = left_types.iter().collect();
+                    if let RDFNodeType::MultiType(right_types) = right_type {
+                        let right_set:HashSet<_> = right_types.iter().collect();
+                        let mut union:Vec<_> = left_set.union(&right_set).into_iter().map(|x|(*x).clone()).collect();
+                        union.sort();
+                        updated_types.insert(left_col.clone(), RDFNodeType::MultiType(union))
+                    } else { //Right not multi
+                        let base_right = BaseRDFNodeType::from_rdf_node_type(right_type);
+                        left_set.insert(&base_right);
+                        let mut new_types: Vec<_> = left_set.into_iter().map(|x|x.clone()).collect();
+                        new_types.sort();
+                        let new_type = RDFNodeType::MultiType(new_types);
+                        right_mappings = convert_lf_col_to_multitype(right_mappings, left_col, right_type);
+                        updated_types.insert(left_col.clone(), new_type);
+                    }
+                } else { //Left not multi
+                    if let RDFNodeType::MultiType(right_types) = right_type {
+                        let mut right_set:HashSet<_> = right_types.iter().collect();
+                        let base_left = BaseRDFNodeType::from_rdf_node_type(left_type);
+                        right_set.insert(&base_left);
+                        let mut new_types: Vec<_> = right_set.into_iter().map(|x|x.clone()).collect();
+                        new_types.sort();
+                        let new_type = RDFNodeType::MultiType(new_types);
+                        left_mappings = convert_lf_col_to_multitype(left_mappings, left_col, left_type);
+                        updated_types.insert(left_col.clone(), new_type);
+                    } else { //Both not multi
+                        let base_left = BaseRDFNodeType::from_rdf_node_type(left_type);
+                        let base_right = BaseRDFNodeType::from_rdf_node_type(right_type);
+                        let mut new_types = vec![base_left, base_right];
+                        new_types.sort();
+                        let new_type = RDFNodeType::MultiType(new_types);
+                        left_mappings = convert_lf_col_to_multitype(left_mappings, left_col, left_type);
+                        right_mappings = convert_lf_col_to_multitype(right_mappings, left_col, right_type);
+                        updated_types.insert(left_col.to_string(), new_type);
+                    }
+                }
+            }
+        }
     }
+    let mut explode_set = HashSet::new();
+    for k in updated_types.keys() {
+        explode_set.insert(k);
+    }
+
+    let prefix = uuid::Uuid::new_v4().to_string();
+    (left_mappings, left_exploded_set) = explode_multicols(left_mappings, &explode_set, &prefix);
+    (right_mappings, _) = explode_multicols(right_mappings, &explode_set, prefix);
 
     let output_mappings =
         concat_lf_diagonal(vec![left_mappings, right_mappings], UnionArgs::default())
