@@ -3,8 +3,8 @@ use log::warn;
 use oxrdf::Variable;
 use polars::datatypes::{CategoricalOrdering, DataType};
 use polars::frame::UniqueKeepStrategy;
-use polars::prelude::{col, concat_lf_diagonal, lit, Expr, JoinArgs, JoinType, UnionArgs, LazyFrame, TemporalMethods};
-use representation::multitype::{convert_lf_col_to_multitype, create_join_compatible_solution_mappings, explode_multicols, force_convert_multicol_to_single_col, implode_multicolumns};
+use polars::prelude::{col, concat_lf_diagonal, lit, Expr, JoinArgs, JoinType, UnionArgs};
+use representation::multitype::{convert_lf_col_to_multitype, create_join_compatible_solution_mappings, explode_multicols, implode_multicolumns};
 use representation::query_context::{Context};
 use representation::multitype::join_workaround;
 use representation::solution_mapping::{is_string_col, SolutionMappings};
@@ -374,6 +374,8 @@ pub fn union(
         rdf_node_types: right_datatypes,
     } = right_solution_mappings;
     let mut updated_types = HashMap::new();
+    let mut left_new_multitypes = HashMap::new();
+    let mut right_new_multitypes = HashMap::new();
     for (left_col, left_type) in &left_datatypes {
         if let Some(right_type) = right_datatypes.get(left_col) {
             if left_type != right_type {
@@ -391,6 +393,8 @@ pub fn union(
                         new_types.sort();
                         let new_type = RDFNodeType::MultiType(new_types);
                         right_mappings = convert_lf_col_to_multitype(right_mappings, left_col, right_type);
+                        //Update the current multitype of right_mappings
+                        right_new_multitypes.insert(left_col.clone(), RDFNodeType::MultiType(vec![base_right]));
                         updated_types.insert(left_col.clone(), new_type);
                     }
                 } else { //Left not multi
@@ -402,24 +406,54 @@ pub fn union(
                         new_types.sort();
                         let new_type = RDFNodeType::MultiType(new_types);
                         left_mappings = convert_lf_col_to_multitype(left_mappings, left_col, left_type);
+                        //Update the current multitype of left_mappings
+                        left_new_multitypes.insert(left_col.clone(), RDFNodeType::MultiType(vec![base_left]));
                         updated_types.insert(left_col.clone(), new_type);
                     } else { //Both not multi
                         let base_left = BaseRDFNodeType::from_rdf_node_type(left_type);
                         let base_right = BaseRDFNodeType::from_rdf_node_type(right_type);
-                        let mut new_types = vec![base_left, base_right];
+                        let mut new_types = vec![base_left.clone(), base_right.clone()];
                         new_types.sort();
                         let new_type = RDFNodeType::MultiType(new_types);
                         left_mappings = convert_lf_col_to_multitype(left_mappings, left_col, left_type);
                         right_mappings = convert_lf_col_to_multitype(right_mappings, left_col, right_type);
+
+                        left_new_multitypes.insert(left_col.clone(), RDFNodeType::MultiType(vec![base_left]));
+                        right_new_multitypes.insert(left_col.clone(), RDFNodeType::MultiType(vec![base_right]));
+
                         updated_types.insert(left_col.to_string(), new_type);
                     }
                 }
             }
         }
     }
-    let prefix = uuid::Uuid::new_v4().to_string();
-    let (left_mappings, left_exploded_map) = explode_multicols(left_mappings, &updated_types, &prefix);
-    let (right_mappings, _) = explode_multicols(right_mappings, &updated_types, &prefix);
+
+    for (c, t) in &left_datatypes {
+        if matches!(t, &RDFNodeType::MultiType(..)) {
+            left_new_multitypes.insert(c.clone(), t.clone());
+        }
+    }
+
+    for (c, t) in &right_datatypes {
+        if matches!(t, &RDFNodeType::MultiType(..)) {
+            right_new_multitypes.insert(c.clone(), t.clone());
+        }
+    }
+
+    let (left_mappings, mut left_exploded_map) = explode_multicols(left_mappings, &left_new_multitypes);
+    let (right_mappings, right_exploded_map) = explode_multicols(right_mappings, &right_new_multitypes);
+    println!("left: {}", left_mappings.clone().collect().unwrap());
+    println!("right: {}", right_mappings.clone().collect().unwrap());
+    for (c, (mut right_inner_columns, mut prefixed_right_inner_columns)) in right_exploded_map {
+        if let Some((left_inner_columns, prefixed_left_inner_columns)) = left_exploded_map.get_mut(c) {
+            for (r,pr) in right_inner_columns.into_iter().zip(prefixed_right_inner_columns.into_iter()) {
+                if !left_inner_columns.contains(&r) {
+                    left_inner_columns.push(r);
+                    prefixed_left_inner_columns.push(pr);
+                }
+            }
+        }
+    }
 
     let mut output_mappings =
         concat_lf_diagonal(vec![left_mappings, right_mappings], UnionArgs::default())
