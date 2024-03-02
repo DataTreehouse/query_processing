@@ -151,7 +151,7 @@ pub fn join(
             &left_datatypes,
             right_mappings,
             &right_datatypes,
-            JoinArgs::new(JoinType::Inner),
+            JoinType::Inner,
         );
     }
 
@@ -227,13 +227,7 @@ pub fn left_join(
             &left_datatypes,
             right_mappings,
             &right_datatypes,
-            JoinArgs {
-                how: JoinType::Left,
-                validation: Default::default(),
-                suffix: None,
-                slice: None,
-                join_nulls: true,
-            },
+            JoinType::Left
         );
     }
 
@@ -427,7 +421,6 @@ pub fn union(
             }
         }
     }
-
     for (c, t) in &left_datatypes {
         if matches!(t, &RDFNodeType::MultiType(..)) {
             left_new_multitypes.insert(c.clone(), t.clone());
@@ -442,8 +435,6 @@ pub fn union(
 
     let (left_mappings, mut left_exploded_map) = explode_multicols(left_mappings, &left_new_multitypes);
     let (right_mappings, right_exploded_map) = explode_multicols(right_mappings, &right_new_multitypes);
-    println!("left: {}", left_mappings.clone().collect().unwrap());
-    println!("right: {}", right_mappings.clone().collect().unwrap());
     for (c, (mut right_inner_columns, mut prefixed_right_inner_columns)) in right_exploded_map {
         if let Some((left_inner_columns, prefixed_left_inner_columns)) = left_exploded_map.get_mut(c) {
             for (r,pr) in right_inner_columns.into_iter().zip(prefixed_right_inner_columns.into_iter()) {
