@@ -435,7 +435,7 @@ pub fn union(
 
     let (left_mappings, mut left_exploded_map) = explode_multicols(left_mappings, &left_new_multitypes);
     let (right_mappings, right_exploded_map) = explode_multicols(right_mappings, &right_new_multitypes);
-    for (c, (mut right_inner_columns, mut prefixed_right_inner_columns)) in right_exploded_map {
+    for (c, (right_inner_columns, prefixed_right_inner_columns)) in right_exploded_map {
         if let Some((left_inner_columns, prefixed_left_inner_columns)) = left_exploded_map.get_mut(c) {
             for (r,pr) in right_inner_columns.into_iter().zip(prefixed_right_inner_columns.into_iter()) {
                 if !left_inner_columns.contains(&r) {
