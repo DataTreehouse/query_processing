@@ -1,6 +1,6 @@
-pub mod expressions;
+pub mod aggregates;
+pub mod constants;
 pub mod errors;
 pub mod exists_helper;
-pub mod constants;
+pub mod expressions;
 pub mod graph_patterns;
-pub mod aggregates;
