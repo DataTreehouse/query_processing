@@ -78,17 +78,14 @@ pub fn binary_expression(
     right_context: &Context,
     context: &Context,
 ) -> Result<SolutionMappings, QueryProcessingError> {
-    solution_mappings.mappings = solution_mappings
-        .mappings
-        .with_column(
-            (Expr::BinaryExpr {
-                left: Box::new(col(left_context.as_str())),
-                op,
-                right: Box::new(col(right_context.as_str())),
-            })
-            .alias(context.as_str()),
-        )
-        .drop([left_context.as_str(), right_context.as_str()]);
+    solution_mappings.mappings = solution_mappings.mappings.with_column(
+        (Expr::BinaryExpr {
+            left: Box::new(col(left_context.as_str())),
+            op,
+            right: Box::new(col(right_context.as_str())),
+        })
+        .alias(context.as_str()),
+    );
     let t = match op {
         Operator::LtEq
         | Operator::GtEq
@@ -142,6 +139,7 @@ pub fn binary_expression(
     solution_mappings
         .rdf_node_types
         .insert(context.as_str().to_string(), t);
+    solution_mappings = drop_inner_contexts(solution_mappings, &vec![left_context, right_context]);
     Ok(solution_mappings)
 }
 
@@ -152,8 +150,7 @@ pub fn unary_plus(
 ) -> Result<SolutionMappings, QueryProcessingError> {
     solution_mappings.mappings = solution_mappings
         .mappings
-        .with_column(col(plus_context.as_str()).alias(context.as_str()))
-        .drop([&plus_context.as_str()]);
+        .with_column(col(plus_context.as_str()).alias(context.as_str()));
     let existing_type = solution_mappings
         .rdf_node_types
         .get(plus_context.as_str())
@@ -161,6 +158,7 @@ pub fn unary_plus(
     solution_mappings
         .rdf_node_types
         .insert(context.as_str().to_string(), existing_type.clone());
+    solution_mappings = drop_inner_contexts(solution_mappings, &vec![plus_context]);
     Ok(solution_mappings)
 }
 
@@ -178,8 +176,7 @@ pub fn unary_minus(
                 right: Box::new(col(minus_context.as_str())),
             })
             .alias(context.as_str()),
-        )
-        .drop([&minus_context.as_str()]);
+        );
     let existing_type = solution_mappings
         .rdf_node_types
         .get(minus_context.as_str())
@@ -187,6 +184,7 @@ pub fn unary_minus(
     solution_mappings
         .rdf_node_types
         .insert(context.as_str().to_string(), existing_type.clone());
+    solution_mappings = drop_inner_contexts(solution_mappings, &vec![minus_context]);
     Ok(solution_mappings)
 }
 
@@ -197,12 +195,12 @@ pub fn not_expression(
 ) -> Result<SolutionMappings, QueryProcessingError> {
     solution_mappings.mappings = solution_mappings
         .mappings
-        .with_column(col(not_context.as_str()).not().alias(context.as_str()))
-        .drop([&not_context.as_str()]);
+        .with_column(col(not_context.as_str()).not().alias(context.as_str()));
     solution_mappings.rdf_node_types.insert(
         context.as_str().to_string(),
         RDFNodeType::Literal(xsd::BOOLEAN.into_owned()),
     );
+    solution_mappings = drop_inner_contexts(solution_mappings, &vec![not_context]);
     Ok(solution_mappings)
 }
 
@@ -218,6 +216,7 @@ pub fn bound(
         context.as_str().to_string(),
         RDFNodeType::Literal(xsd::BOOLEAN.into_owned()),
     );
+    solution_mappings = drop_inner_contexts(solution_mappings, &vec![context]);
     Ok(solution_mappings)
 }
 
@@ -228,21 +227,14 @@ pub fn if_expression(
     right_context: &Context,
     context: &Context,
 ) -> Result<SolutionMappings, QueryProcessingError> {
-    solution_mappings.mappings = solution_mappings
-        .mappings
-        .with_column(
-            (Expr::Ternary {
-                predicate: Box::new(col(left_context.as_str())),
-                truthy: Box::new(col(middle_context.as_str())),
-                falsy: Box::new(col(right_context.as_str())),
-            })
-            .alias(context.as_str()),
-        )
-        .drop([
-            left_context.as_str(),
-            middle_context.as_str(),
-            right_context.as_str(),
-        ]);
+    solution_mappings.mappings = solution_mappings.mappings.with_column(
+        (Expr::Ternary {
+            predicate: Box::new(col(left_context.as_str())),
+            truthy: Box::new(col(middle_context.as_str())),
+            falsy: Box::new(col(right_context.as_str())),
+        })
+        .alias(context.as_str()),
+    );
     //Todo: generalize..
     let existing_type = solution_mappings
         .rdf_node_types
@@ -251,6 +243,10 @@ pub fn if_expression(
     solution_mappings
         .rdf_node_types
         .insert(context.as_str().to_string(), existing_type.clone());
+    solution_mappings = drop_inner_contexts(
+        solution_mappings,
+        &vec![left_context, middle_context, right_context],
+    );
     Ok(solution_mappings)
 }
 
@@ -266,13 +262,7 @@ pub fn coalesce_expression(
 
     solution_mappings.mappings = solution_mappings
         .mappings
-        .with_column(coalesce(coal_exprs.as_slice()).alias(context.as_str()))
-        .drop(
-            inner_contexts
-                .iter()
-                .map(|c| c.as_str())
-                .collect::<Vec<&str>>(),
-        );
+        .with_column(coalesce(coal_exprs.as_slice()).alias(context.as_str()));
     //TODO: generalize
     let existing_type = solution_mappings
         .rdf_node_types
@@ -281,6 +271,7 @@ pub fn coalesce_expression(
     solution_mappings
         .rdf_node_types
         .insert(context.as_str().to_string(), existing_type.clone());
+    solution_mappings = drop_inner_contexts(solution_mappings, &inner_contexts.iter().collect());
     Ok(solution_mappings)
 }
 
@@ -310,8 +301,9 @@ pub fn exists(
     );
     ser.rename(context.as_str());
     df.with_column(ser).unwrap();
-    df = df.drop(exists_context.as_str()).unwrap();
-    Ok(SolutionMappings::new(df.lazy(), rdf_node_types))
+    let mut solution_mappings = SolutionMappings::new(df.lazy(), rdf_node_types);
+    solution_mappings = drop_inner_contexts(solution_mappings, &vec![exists_context]);
+    Ok(solution_mappings)
 }
 
 pub fn func_expression(
@@ -660,12 +652,7 @@ pub fn func_expression(
             todo!("{}", func)
         }
     }
-    solution_mappings.mappings = solution_mappings.mappings.drop(
-        args_contexts
-            .values()
-            .map(|x| x.as_str())
-            .collect::<Vec<&str>>(),
-    );
+    solution_mappings = drop_inner_contexts(solution_mappings, &args_contexts.values().collect());
     Ok(solution_mappings)
 }
 
@@ -691,17 +678,24 @@ pub fn in_expression(
 
     solution_mappings.mappings = solution_mappings
         .mappings
-        .with_column(expr.alias(context.as_str()))
-        .drop([left_context.as_str()])
-        .drop(
-            right_contexts
-                .iter()
-                .map(|x| x.as_str())
-                .collect::<Vec<&str>>(),
-        );
+        .with_column(expr.alias(context.as_str()));
     solution_mappings.rdf_node_types.insert(
         context.as_str().to_string(),
         RDFNodeType::Literal(xsd::BOOLEAN.into_owned()),
     );
+    solution_mappings = drop_inner_contexts(solution_mappings, &vec![left_context]);
+    solution_mappings = drop_inner_contexts(solution_mappings, &right_contexts.iter().collect());
+
     Ok(solution_mappings)
+}
+
+pub fn drop_inner_contexts(mut sm: SolutionMappings, contexts: &Vec<&Context>) -> SolutionMappings {
+    let mut inner = vec![];
+    for c in contexts {
+        let cstr = c.as_str();
+        sm.rdf_node_types.remove(cstr);
+        inner.push(cstr.to_string());
+    }
+    sm.mappings = sm.mappings.drop(inner);
+    sm
 }

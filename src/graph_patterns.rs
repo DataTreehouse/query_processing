@@ -4,11 +4,11 @@ use oxrdf::Variable;
 use polars::datatypes::{CategoricalOrdering, DataType};
 use polars::frame::UniqueKeepStrategy;
 use polars::prelude::{col, concat_lf_diagonal, lit, Expr, JoinArgs, JoinType, UnionArgs};
-use representation::multitype::{join_workaround, unique_workaround};
 use representation::multitype::{
     convert_lf_col_to_multitype, create_join_compatible_solution_mappings, explode_multicols,
     implode_multicolumns, lf_column_to_categorical,
 };
+use representation::multitype::{join_workaround, unique_workaround};
 use representation::query_context::Context;
 use representation::solution_mapping::{is_string_col, SolutionMappings};
 use representation::{BaseRDFNodeType, RDFNodeType};
@@ -18,7 +18,12 @@ use uuid::Uuid;
 pub fn distinct(
     mut solution_mappings: SolutionMappings,
 ) -> Result<SolutionMappings, QueryProcessingError> {
-    solution_mappings.mappings = unique_workaround(solution_mappings.mappings, &solution_mappings.rdf_node_types, None,true);
+    solution_mappings.mappings = unique_workaround(
+        solution_mappings.mappings,
+        &solution_mappings.rdf_node_types,
+        None,
+        true,
+    );
     solution_mappings.mappings = solution_mappings
         .mappings
         .unique_stable(None, UniqueKeepStrategy::First);
@@ -329,7 +334,6 @@ pub fn union(
         mut rdf_node_types,
     } in mappings
     {
-        println!("Mappings: {:?}", mappings.clone().collect());
         let mut new_multi = HashMap::new();
         for (c, t) in &rdf_node_types {
             let target_type = target_types.get(c).unwrap();
@@ -370,10 +374,6 @@ pub fn union(
 
     let mut output_mappings =
         concat_lf_diagonal(to_concat, UnionArgs::default()).expect("Concat problem");
-    println!(
-        "Mappings concatted: {:?}",
-        output_mappings.clone().collect()
-    );
     output_mappings = implode_multicolumns(output_mappings, exploded_map);
     Ok(SolutionMappings::new(output_mappings, target_types))
 }
