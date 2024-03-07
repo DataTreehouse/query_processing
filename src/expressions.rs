@@ -4,7 +4,7 @@ use crate::constants::{
 };
 use crate::errors::QueryProcessingError;
 use oxrdf::vocab::xsd;
-use oxrdf::{Literal, NamedNode, Variable};
+use oxrdf::{Literal, NamedNode, NamedNodeRef, Variable};
 use polars::datatypes::{DataType, TimeUnit};
 use polars::frame::UniqueKeepStrategy;
 use polars::prelude::{
@@ -16,7 +16,9 @@ use representation::solution_mapping::SolutionMappings;
 use representation::sparql_to_polars::{
     sparql_literal_to_polars_literal_value, sparql_named_node_to_polars_literal_value,
 };
-use representation::RDFNodeType;
+use representation::{
+    literal_is_boolean, literal_is_datetime, literal_is_numeric, literal_is_string, RDFNodeType,
+};
 use spargebra::algebra::{Expression, Function};
 use std::collections::HashMap;
 use std::ops::{Div, Mul};
@@ -698,4 +700,29 @@ pub fn drop_inner_contexts(mut sm: SolutionMappings, contexts: &Vec<&Context>) -
     }
     sm.mappings = sm.mappings.drop(inner);
     sm
+}
+
+pub fn compatible_operation(expression: Expression, l1: NamedNodeRef, l2: NamedNodeRef) -> bool {
+    let compat = match expression {
+        Expression::Equal(..)
+        | Expression::LessOrEqual(..)
+        | Expression::GreaterOrEqual(..)
+        | Expression::Greater(..)
+        | Expression::Less(..) => {
+            (literal_is_numeric(l1) && literal_is_numeric(l2))
+                || (literal_is_boolean(l1) && literal_is_boolean(l2))
+                || (literal_is_string(l1) && literal_is_string(l2))
+                || (literal_is_datetime(l1) && literal_is_datetime(l2))
+        }
+        Expression::Or(..) | Expression::And(..) => {
+            literal_is_boolean(l1) && literal_is_boolean(l2)
+        }
+        Expression::Add(..)
+        | Expression::Subtract(..)
+        | Expression::Multiply(..)
+        | Expression::Divide(..) => literal_is_numeric(l1) && literal_is_numeric(l2),
+        _ => todo!(),
+    };
+    println!("Compat: {}, {:?}, {:?}", compat, l1, l2);
+    compat
 }
