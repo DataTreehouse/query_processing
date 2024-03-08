@@ -116,7 +116,7 @@ pub fn join(
         rdf_node_types: left_datatypes,
     } = left_solution_mappings;
 
-    let (left_mappings, left_datatypes, mut right_mappings, right_datatypes) =
+    let (left_mappings, left_datatypes, right_mappings, right_datatypes) =
         create_join_compatible_solution_mappings(
             left_mappings,
             left_datatypes,
