@@ -1,22 +1,27 @@
+use crate::constants::{
+    DATETIME_AS_NANOS, DATETIME_AS_SECONDS, FLOOR_DATETIME_TO_SECONDS_INTERVAL, MODULUS,
+    NANOS_AS_DATETIME, SECONDS_AS_DATETIME,
+};
 use crate::errors::QueryProcessingError;
 use oxrdf::vocab::xsd;
-use oxrdf::{Literal, NamedNode, Variable};
+use oxrdf::{Literal, NamedNode, NamedNodeRef, Variable};
 use polars::datatypes::{DataType, TimeUnit};
 use polars::frame::UniqueKeepStrategy;
 use polars::prelude::{
-    coalesce, col, concat_str, is_in, lit, Expr, IntoLazy, LazyFrame, LiteralValue,
-    Operator, Series,
+    coalesce, col, concat_str, is_in, lit, Expr, IntoLazy, LazyFrame, LiteralValue, Operator,
+    Series,
 };
 use representation::query_context::Context;
 use representation::solution_mapping::SolutionMappings;
 use representation::sparql_to_polars::{
     sparql_literal_to_polars_literal_value, sparql_named_node_to_polars_literal_value,
 };
-use representation::RDFNodeType;
+use representation::{
+    literal_is_boolean, literal_is_datetime, literal_is_numeric, literal_is_string, RDFNodeType,
+};
 use spargebra::algebra::{Expression, Function};
 use std::collections::HashMap;
 use std::ops::{Div, Mul};
-use crate::constants::{DATETIME_AS_NANOS, DATETIME_AS_SECONDS, FLOOR_DATETIME_TO_SECONDS_INTERVAL, MODULUS, NANOS_AS_DATETIME, SECONDS_AS_DATETIME};
 
 pub fn named_node(
     mut solution_mappings: SolutionMappings,
@@ -75,17 +80,14 @@ pub fn binary_expression(
     right_context: &Context,
     context: &Context,
 ) -> Result<SolutionMappings, QueryProcessingError> {
-    solution_mappings.mappings = solution_mappings
-        .mappings
-        .with_column(
-            (Expr::BinaryExpr {
-                left: Box::new(col(left_context.as_str())),
-                op,
-                right: Box::new(col(right_context.as_str())),
-            })
-            .alias(context.as_str()),
-        )
-        .drop_columns([left_context.as_str(), right_context.as_str()]);
+    solution_mappings.mappings = solution_mappings.mappings.with_column(
+        (Expr::BinaryExpr {
+            left: Box::new(col(left_context.as_str())),
+            op,
+            right: Box::new(col(right_context.as_str())),
+        })
+        .alias(context.as_str()),
+    );
     let t = match op {
         Operator::LtEq
         | Operator::GtEq
@@ -139,6 +141,7 @@ pub fn binary_expression(
     solution_mappings
         .rdf_node_types
         .insert(context.as_str().to_string(), t);
+    solution_mappings = drop_inner_contexts(solution_mappings, &vec![left_context, right_context]);
     Ok(solution_mappings)
 }
 
@@ -149,8 +152,7 @@ pub fn unary_plus(
 ) -> Result<SolutionMappings, QueryProcessingError> {
     solution_mappings.mappings = solution_mappings
         .mappings
-        .with_column(col(plus_context.as_str()).alias(context.as_str()))
-        .drop_columns([&plus_context.as_str()]);
+        .with_column(col(plus_context.as_str()).alias(context.as_str()));
     let existing_type = solution_mappings
         .rdf_node_types
         .get(plus_context.as_str())
@@ -158,6 +160,7 @@ pub fn unary_plus(
     solution_mappings
         .rdf_node_types
         .insert(context.as_str().to_string(), existing_type.clone());
+    solution_mappings = drop_inner_contexts(solution_mappings, &vec![plus_context]);
     Ok(solution_mappings)
 }
 
@@ -175,8 +178,7 @@ pub fn unary_minus(
                 right: Box::new(col(minus_context.as_str())),
             })
             .alias(context.as_str()),
-        )
-        .drop_columns([&minus_context.as_str()]);
+        );
     let existing_type = solution_mappings
         .rdf_node_types
         .get(minus_context.as_str())
@@ -184,6 +186,7 @@ pub fn unary_minus(
     solution_mappings
         .rdf_node_types
         .insert(context.as_str().to_string(), existing_type.clone());
+    solution_mappings = drop_inner_contexts(solution_mappings, &vec![minus_context]);
     Ok(solution_mappings)
 }
 
@@ -194,12 +197,12 @@ pub fn not_expression(
 ) -> Result<SolutionMappings, QueryProcessingError> {
     solution_mappings.mappings = solution_mappings
         .mappings
-        .with_column(col(not_context.as_str()).not().alias(context.as_str()))
-        .drop_columns([&not_context.as_str()]);
+        .with_column(col(not_context.as_str()).not().alias(context.as_str()));
     solution_mappings.rdf_node_types.insert(
         context.as_str().to_string(),
         RDFNodeType::Literal(xsd::BOOLEAN.into_owned()),
     );
+    solution_mappings = drop_inner_contexts(solution_mappings, &vec![not_context]);
     Ok(solution_mappings)
 }
 
@@ -215,6 +218,7 @@ pub fn bound(
         context.as_str().to_string(),
         RDFNodeType::Literal(xsd::BOOLEAN.into_owned()),
     );
+    solution_mappings = drop_inner_contexts(solution_mappings, &vec![context]);
     Ok(solution_mappings)
 }
 
@@ -225,21 +229,14 @@ pub fn if_expression(
     right_context: &Context,
     context: &Context,
 ) -> Result<SolutionMappings, QueryProcessingError> {
-    solution_mappings.mappings = solution_mappings
-        .mappings
-        .with_column(
-            (Expr::Ternary {
-                predicate: Box::new(col(left_context.as_str())),
-                truthy: Box::new(col(middle_context.as_str())),
-                falsy: Box::new(col(right_context.as_str())),
-            })
-            .alias(context.as_str()),
-        )
-        .drop_columns([
-            left_context.as_str(),
-            middle_context.as_str(),
-            right_context.as_str(),
-        ]);
+    solution_mappings.mappings = solution_mappings.mappings.with_column(
+        (Expr::Ternary {
+            predicate: Box::new(col(left_context.as_str())),
+            truthy: Box::new(col(middle_context.as_str())),
+            falsy: Box::new(col(right_context.as_str())),
+        })
+        .alias(context.as_str()),
+    );
     //Todo: generalize..
     let existing_type = solution_mappings
         .rdf_node_types
@@ -248,6 +245,10 @@ pub fn if_expression(
     solution_mappings
         .rdf_node_types
         .insert(context.as_str().to_string(), existing_type.clone());
+    solution_mappings = drop_inner_contexts(
+        solution_mappings,
+        &vec![left_context, middle_context, right_context],
+    );
     Ok(solution_mappings)
 }
 
@@ -263,13 +264,7 @@ pub fn coalesce_expression(
 
     solution_mappings.mappings = solution_mappings
         .mappings
-        .with_column(coalesce(coal_exprs.as_slice()).alias(context.as_str()))
-        .drop_columns(
-            inner_contexts
-                .iter()
-                .map(|c| c.as_str())
-                .collect::<Vec<&str>>(),
-        );
+        .with_column(coalesce(coal_exprs.as_slice()).alias(context.as_str()));
     //TODO: generalize
     let existing_type = solution_mappings
         .rdf_node_types
@@ -278,6 +273,7 @@ pub fn coalesce_expression(
     solution_mappings
         .rdf_node_types
         .insert(context.as_str().to_string(), existing_type.clone());
+    solution_mappings = drop_inner_contexts(solution_mappings, &inner_contexts.iter().collect());
     Ok(solution_mappings)
 }
 
@@ -307,8 +303,9 @@ pub fn exists(
     );
     ser.rename(context.as_str());
     df.with_column(ser).unwrap();
-    df = df.drop(exists_context.as_str()).unwrap();
-    Ok(SolutionMappings::new(df.lazy(), rdf_node_types))
+    let mut solution_mappings = SolutionMappings::new(df.lazy(), rdf_node_types);
+    solution_mappings = drop_inner_contexts(solution_mappings, &vec![exists_context]);
+    Ok(solution_mappings)
 }
 
 pub fn func_expression(
@@ -448,7 +445,8 @@ pub fn func_expression(
             let cols: Vec<_> = (0..args.len())
                 .map(|i| col(args_contexts.get(&i).unwrap().as_str()))
                 .collect();
-            let new_mappings = mappings.with_column(concat_str(cols, "").alias(context.as_str()));
+            let new_mappings =
+                mappings.with_column(concat_str(cols, "", true).alias(context.as_str()));
             solution_mappings = SolutionMappings::new(new_mappings, datatypes);
             solution_mappings.rdf_node_types.insert(
                 context.as_str().to_string(),
@@ -507,7 +505,7 @@ pub fn func_expression(
                 let first_context = args_contexts.get(&0).unwrap();
                 solution_mappings.mappings = solution_mappings.mappings.with_column(
                     col(first_context.as_str())
-                        .cast(DataType::Utf8)
+                        .cast(DataType::String)
                         .alias(context.as_str()),
                 );
                 solution_mappings.rdf_node_types.insert(
@@ -517,13 +515,12 @@ pub fn func_expression(
             } else if iri == DATETIME_AS_NANOS {
                 assert_eq!(args.len(), 1);
                 let first_context = args_contexts.get(&0).unwrap();
-                solution_mappings.mappings =
-                    solution_mappings.mappings.with_column(
-                        col(&first_context.as_str())
-                            .cast(DataType::Datetime(TimeUnit::Nanoseconds, None))
-                            .cast(DataType::UInt64)
-                            .alias(context.as_str()),
-                    );
+                solution_mappings.mappings = solution_mappings.mappings.with_column(
+                    col(&first_context.as_str())
+                        .cast(DataType::Datetime(TimeUnit::Nanoseconds, None))
+                        .cast(DataType::UInt64)
+                        .alias(context.as_str()),
+                );
                 solution_mappings.rdf_node_types.insert(
                     context.as_str().to_string(),
                     RDFNodeType::Literal(xsd::INTEGER.into_owned()),
@@ -531,14 +528,13 @@ pub fn func_expression(
             } else if iri == DATETIME_AS_SECONDS {
                 assert_eq!(args.len(), 1);
                 let first_context = args_contexts.get(&0).unwrap();
-                solution_mappings.mappings =
-                    solution_mappings.mappings.with_column(
-                        col(&first_context.as_str())
-                            .cast(DataType::Datetime(TimeUnit::Milliseconds, None))
-                            .cast(DataType::UInt64)
-                            .div(lit(1000))
-                            .alias(context.as_str()),
-                    );
+                solution_mappings.mappings = solution_mappings.mappings.with_column(
+                    col(&first_context.as_str())
+                        .cast(DataType::Datetime(TimeUnit::Milliseconds, None))
+                        .cast(DataType::UInt64)
+                        .div(lit(1000))
+                        .alias(context.as_str()),
+                );
                 solution_mappings.rdf_node_types.insert(
                     context.as_str().to_string(),
                     RDFNodeType::Literal(xsd::INTEGER.into_owned()),
@@ -546,12 +542,11 @@ pub fn func_expression(
             } else if iri == NANOS_AS_DATETIME {
                 assert_eq!(args.len(), 1);
                 let first_context = args_contexts.get(&0).unwrap();
-                solution_mappings.mappings =
-                    solution_mappings.mappings.with_column(
-                        col(&first_context.as_str())
-                            .cast(DataType::Datetime(TimeUnit::Nanoseconds, None))
-                            .alias(context.as_str()),
-                    );
+                solution_mappings.mappings = solution_mappings.mappings.with_column(
+                    col(&first_context.as_str())
+                        .cast(DataType::Datetime(TimeUnit::Nanoseconds, None))
+                        .alias(context.as_str()),
+                );
                 solution_mappings.rdf_node_types.insert(
                     context.as_str().to_string(),
                     RDFNodeType::Literal(xsd::DATE_TIME.into_owned()),
@@ -559,13 +554,12 @@ pub fn func_expression(
             } else if iri == SECONDS_AS_DATETIME {
                 assert_eq!(args.len(), 1);
                 let first_context = args_contexts.get(&0).unwrap();
-                solution_mappings.mappings =
-                    solution_mappings.mappings.with_column(
-                        col(&first_context.as_str())
-                            .mul(Expr::Literal(LiteralValue::UInt64(1000)))
-                            .cast(DataType::Datetime(TimeUnit::Milliseconds, None))
-                            .alias(context.as_str()),
-                    );
+                solution_mappings.mappings = solution_mappings.mappings.with_column(
+                    col(&first_context.as_str())
+                        .mul(Expr::Literal(LiteralValue::UInt64(1000)))
+                        .cast(DataType::Datetime(TimeUnit::Milliseconds, None))
+                        .alias(context.as_str()),
+                );
                 solution_mappings.rdf_node_types.insert(
                     context.as_str().to_string(),
                     RDFNodeType::Literal(xsd::DATE_TIME.into_owned()),
@@ -575,11 +569,10 @@ pub fn func_expression(
                 let first_context = args_contexts.get(&0).unwrap();
                 let second_context = args_contexts.get(&1).unwrap();
 
-                solution_mappings.mappings =
-                    solution_mappings.mappings.with_column(
-                        (col(&first_context.as_str()) % col(&second_context.as_str()))
-                            .alias(context.as_str()),
-                    );
+                solution_mappings.mappings = solution_mappings.mappings.with_column(
+                    (col(&first_context.as_str()) % col(&second_context.as_str()))
+                        .alias(context.as_str()),
+                );
                 solution_mappings.rdf_node_types.insert(
                     context.as_str().to_string(),
                     RDFNodeType::Literal(xsd::INTEGER.into_owned()),
@@ -594,14 +587,13 @@ pub fn func_expression(
                     .cast(DataType::UInt64)
                     .div(lit(1000));
 
-                solution_mappings.mappings =
-                    solution_mappings.mappings.with_column(
-                        ((first_as_seconds.clone()
-                            - (first_as_seconds % col(&second_context.as_str())))
-                            .mul(Expr::Literal(LiteralValue::UInt64(1000)))
-                            .cast(DataType::Datetime(TimeUnit::Milliseconds, None)))
-                            .alias(context.as_str()),
-                    );
+                solution_mappings.mappings = solution_mappings.mappings.with_column(
+                    ((first_as_seconds.clone()
+                        - (first_as_seconds % col(&second_context.as_str())))
+                    .mul(Expr::Literal(LiteralValue::UInt64(1000)))
+                    .cast(DataType::Datetime(TimeUnit::Milliseconds, None)))
+                    .alias(context.as_str()),
+                );
                 solution_mappings.rdf_node_types.insert(
                     context.as_str().to_string(),
                     RDFNodeType::Literal(xsd::DATE_TIME.into_owned()),
@@ -615,11 +607,12 @@ pub fn func_expression(
             let first_context = args_contexts.get(&0).unwrap();
             let second_context = args_contexts.get(&1).unwrap();
 
-            solution_mappings.mappings =
-                solution_mappings.mappings.with_column(
-                    (col(&first_context.as_str()).str().contains_literal(col(&second_context.as_str())))
-                        .alias(context.as_str()),
-                );
+            solution_mappings.mappings = solution_mappings.mappings.with_column(
+                (col(&first_context.as_str())
+                    .str()
+                    .contains_literal(col(&second_context.as_str())))
+                .alias(context.as_str()),
+            );
             solution_mappings.rdf_node_types.insert(
                 context.as_str().to_string(),
                 RDFNodeType::Literal(xsd::BOOLEAN.into_owned()),
@@ -630,11 +623,12 @@ pub fn func_expression(
             let first_context = args_contexts.get(&0).unwrap();
             let second_context = args_contexts.get(&1).unwrap();
 
-            solution_mappings.mappings =
-                solution_mappings.mappings.with_column(
-                    (col(&first_context.as_str()).str().starts_with(col(&second_context.as_str())))
-                        .alias(context.as_str()),
-                );
+            solution_mappings.mappings = solution_mappings.mappings.with_column(
+                (col(&first_context.as_str())
+                    .str()
+                    .starts_with(col(&second_context.as_str())))
+                .alias(context.as_str()),
+            );
             solution_mappings.rdf_node_types.insert(
                 context.as_str().to_string(),
                 RDFNodeType::Literal(xsd::BOOLEAN.into_owned()),
@@ -645,28 +639,31 @@ pub fn func_expression(
             let first_context = args_contexts.get(&0).unwrap();
             let second_context = args_contexts.get(&1).unwrap();
 
-            solution_mappings.mappings =
-                solution_mappings.mappings.with_column(
-                    (col(&first_context.as_str()).str().ends_with(col(&second_context.as_str())))
-                        .alias(context.as_str()),
-                );
+            solution_mappings.mappings = solution_mappings.mappings.with_column(
+                (col(&first_context.as_str())
+                    .str()
+                    .ends_with(col(&second_context.as_str())))
+                .alias(context.as_str()),
+            );
             solution_mappings.rdf_node_types.insert(
                 context.as_str().to_string(),
                 RDFNodeType::Literal(xsd::BOOLEAN.into_owned()),
             );
         }
-        _ => {todo!("{}", func)}
+        _ => {
+            todo!("{}", func)
+        }
     }
-    solution_mappings.mappings = solution_mappings.mappings.drop_columns(
-        args_contexts
-            .values()
-            .map(|x| x.as_str())
-            .collect::<Vec<&str>>(),
-    );
+    solution_mappings = drop_inner_contexts(solution_mappings, &args_contexts.values().collect());
     Ok(solution_mappings)
 }
 
-pub fn in_expression(mut solution_mappings: SolutionMappings, left_context:&Context, right_contexts:&Vec<Context>, context: &Context) -> Result<SolutionMappings, QueryProcessingError> {
+pub fn in_expression(
+    mut solution_mappings: SolutionMappings,
+    left_context: &Context,
+    right_contexts: &Vec<Context>,
+    context: &Context,
+) -> Result<SolutionMappings, QueryProcessingError> {
     let mut expr = Expr::Literal(LiteralValue::Boolean(false));
 
     for right_context in right_contexts {
@@ -683,17 +680,49 @@ pub fn in_expression(mut solution_mappings: SolutionMappings, left_context:&Cont
 
     solution_mappings.mappings = solution_mappings
         .mappings
-        .with_column(expr.alias(context.as_str()))
-        .drop_columns([left_context.as_str()])
-        .drop_columns(
-            right_contexts
-                .iter()
-                .map(|x| x.as_str())
-                .collect::<Vec<&str>>(),
-        );
+        .with_column(expr.alias(context.as_str()));
     solution_mappings.rdf_node_types.insert(
         context.as_str().to_string(),
         RDFNodeType::Literal(xsd::BOOLEAN.into_owned()),
     );
+    solution_mappings = drop_inner_contexts(solution_mappings, &vec![left_context]);
+    solution_mappings = drop_inner_contexts(solution_mappings, &right_contexts.iter().collect());
+
     Ok(solution_mappings)
+}
+
+pub fn drop_inner_contexts(mut sm: SolutionMappings, contexts: &Vec<&Context>) -> SolutionMappings {
+    let mut inner = vec![];
+    for c in contexts {
+        let cstr = c.as_str();
+        sm.rdf_node_types.remove(cstr);
+        inner.push(cstr.to_string());
+    }
+    sm.mappings = sm.mappings.drop(inner);
+    sm
+}
+
+pub fn compatible_operation(expression: Expression, l1: NamedNodeRef, l2: NamedNodeRef) -> bool {
+    let compat = match expression {
+        Expression::Equal(..)
+        | Expression::LessOrEqual(..)
+        | Expression::GreaterOrEqual(..)
+        | Expression::Greater(..)
+        | Expression::Less(..) => {
+            (literal_is_numeric(l1) && literal_is_numeric(l2))
+                || (literal_is_boolean(l1) && literal_is_boolean(l2))
+                || (literal_is_string(l1) && literal_is_string(l2))
+                || (literal_is_datetime(l1) && literal_is_datetime(l2))
+        }
+        Expression::Or(..) | Expression::And(..) => {
+            literal_is_boolean(l1) && literal_is_boolean(l2)
+        }
+        Expression::Add(..)
+        | Expression::Subtract(..)
+        | Expression::Multiply(..)
+        | Expression::Divide(..) => literal_is_numeric(l1) && literal_is_numeric(l2),
+        _ => todo!(),
+    };
+    println!("Compat: {}, {:?}, {:?}", compat, l1, l2);
+    compat
 }
