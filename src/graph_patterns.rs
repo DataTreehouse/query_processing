@@ -162,10 +162,10 @@ pub fn minus(
         for c in join_on {
             if is_string_col(left_solution_mappings.rdf_node_types.get(c).unwrap()) {
                 right_mappings = right_mappings.with_column(
-                    col(c).cast(DataType::Categorical(None, CategoricalOrdering::Physical)),
+                    col(c).cast(DataType::Categorical(None, CategoricalOrdering::Lexical)),
                 );
                 left_solution_mappings.mappings = left_solution_mappings.mappings.with_column(
-                    col(c).cast(DataType::Categorical(None, CategoricalOrdering::Physical)),
+                    col(c).cast(DataType::Categorical(None, CategoricalOrdering::Lexical)),
                 );
             }
         }
